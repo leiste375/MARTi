@@ -140,10 +140,10 @@ if (serverOptions["https"].toLowerCase() === 'true') {
 
 const restrictedMode = argv.r || false;
 
-const martiVersion = "0.19.3";
+const martiGuiVersion = "0.19.4";
 
 if (argv.v || argv.version) {
-  console.log(martiVersion);
+  console.log(martiGuiVersion);
   process.exit();
 }
 
@@ -530,8 +530,25 @@ if(serverOptions["MARTiSampleDirectory"].length > 0){
 
     try {
       const projectsObj = fsExtra.readJsonSync(dir + "projects.json");
-      for (const [project,runs] of Object.entries(projectsObj)){
-        projectsDatabase[project] = runs;
+      for (const [project,selectors] of Object.entries(projectsObj)){
+        var projectRuns = [];
+        var projectDirectories = [];
+        var projectSamples = [];
+
+        for (const [selector,values] of Object.entries(selectors)){
+          if (selector == "directories"){
+            projectDirectories = values;
+          } else if (selector == "runs") {
+            projectRuns = values;
+          } else if (selector == "samples") {
+            projectSamples = values;
+          }
+        }
+        projectsDatabase[project] = {
+          "directories":projectDirectories,
+          "runs":projectRuns,
+          "samples":projectSamples
+        };
       }
       projectsEnabled = true;
     } catch (err) {
@@ -632,7 +649,11 @@ io.on('connect', function(socket){
 
   clientCount = socket.client.conn.server.clientsCount;
   console.log(`[${new Date().toLocaleString()}] Connection added - users connected: ${clientCount}`);
-  io.sockets.emit('current-client-count', clientCount);
+  var guiVersionAndClientCount = {
+    clientCount: clientCount,
+    guiVersion: martiGuiVersion
+  }
+  io.sockets.emit('current-client-count', guiVersionAndClientCount);
 
   socket.on('hb_pong', function(data){
   });
@@ -681,6 +702,7 @@ io.on('connect', function(socket){
 
   socket.on('meta-request', request => {
     var id = request.clientId;
+
     if (!projectsEnabled){
     io.to(id).emit('meta-response', sampleMetaDict);
     console.log(`[${new Date().toLocaleString()}][${id}] Metadata sent`);
@@ -690,17 +712,34 @@ io.on('connect', function(socket){
       if(projectsDatabase.hasOwnProperty(project)){
         var customMetaDict = {};
         for (const [run,samples] of Object.entries(sampleMetaDict)){
-          if(projectsDatabase[project].includes(run)){
+
+          if(projectsDatabase[project]["runs"].includes(run)){
             customMetaDict[run] = samples;
+          } else {
+            for (const [sample,info] of Object.entries(samples)){
+
+              if (projectsDatabase[project]["samples"].includes(sample)){
+                if (customMetaDict.hasOwnProperty(run)) {
+                  customMetaDict[run][sample] = info;
+                } else {
+                  customMetaDict[run] = {};
+                  customMetaDict[run][sample] = info;
+                }
+              } else if (projectsDatabase[project]["directories"].includes(info.sample.dir)){
+                if (customMetaDict.hasOwnProperty(run)) {
+                  customMetaDict[run][sample] = info;
+                } else {
+                  customMetaDict[run] = {};
+                  customMetaDict[run][sample] = info;
+                }
+              }
+            }
           }
         }
         io.to(id).emit('meta-response', customMetaDict);
         console.log(`[${new Date().toLocaleString()}][${id}] Metadata sent`);
       }
-
     }
-
-
   }
   });
 
@@ -919,7 +958,7 @@ socket.on('compare-tree-request', request => {
         socket.on('disconnect', () => {
           clientCount = socket.client.conn.server.clientsCount;
           console.log(`[${new Date().toLocaleString()}] Connection removed - users connected: ${clientCount}`);
-          io.sockets.emit('current-client-count', clientCount);
+          io.sockets.emit('current-client-count', guiVersionAndClientCount);
         });
 
         socket.on('disconnecting', () => {

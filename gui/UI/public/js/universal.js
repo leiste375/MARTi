@@ -131,7 +131,13 @@ var time = d.getHours() + "-" + d.getMinutes() + "-" + d.getSeconds()
 return time;
 };
 
-
+function urlFormat(){
+  if (clientProject.length > 0){
+    window.history.pushState(null, document.title, "/project/" + clientProject);
+  } else {
+    window.history.pushState(null, document.title, "/");
+  }
+}
 
 $(document).ready(function() {
 
@@ -246,7 +252,7 @@ currentPage = "";
 currentDashboardSampleName = "";
 currentDashboardSampleRun = "";
 compareSampleObjectArray = [];
-var clientProject = null;
+var clientProject = "";
 var clientSample = null;
 
 socket.on('connect', () => {
@@ -287,8 +293,10 @@ socket.on('hb_ping', function(data){
     });
 
 socket.on('current-client-count', function(data){
-  console.log("current number of user: " + data);
-  $("#currentClientCount").text(data);
+  console.log("current number of user: " + data.clientCount);
+  $("#currentClientCount").text(data.clientCount);
+  let guiVersion = "MARTi GUI v" + data.guiVersion;
+  $("#currentGuiVersion").text(guiVersion);
     });
 
 socket.on('sample-removed', function(data){
@@ -301,7 +309,7 @@ socket.on('sample-removed', function(data){
   } else if (currentPage == "Dashboard" && currentDashboardSampleName == data.sampleId) {
     currentDashboardSampleName = "";
 
-    window.history.pushState(null, document.title, "/");
+    urlFormat();
 
     activeSidebarIcon($("#samples-item"));
     currentPage = "Samples";
