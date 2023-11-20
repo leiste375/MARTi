@@ -190,10 +190,11 @@ public class ReadProcessor {
     private boolean checkForEnd() {
         boolean fEnd = true;
         
-        // End if scheduler has failed jobs
+        // Used to end if scheduler has failed jobs. Now we try to continue...
         if (options.getJobScheduler().getFailedJobCount() > 0) {
-            options.getLog().printlnLogAndScreen("ERROR: failed jobs, so exiting early.");
-            return true;
+            //options.getLog().printlnLogAndScreen("ERROR: failed jobs, so exiting early.");
+            options.getLog().println("ERROR: failed jobs, but trying to continue.");
+            //return true;
         }
         
         // We only exit if...
@@ -261,7 +262,7 @@ public class ReadProcessor {
         // Execute thread which checks for new reads to filter
         executor.execute(readFilter);
         if(options.getCompressBlastFiles()) {
-            fileCompressor = new FileCompressorRunnable(fileCompressionQueue);
+            fileCompressor = new FileCompressorRunnable(options, fileCompressionQueue);
             rc.setFileCompressionQueue(fileCompressionQueue);
             // Execute thread which checks for files to compress and compresses them
             executor.execute(fileCompressor);

@@ -10,7 +10,7 @@ var argv = require('minimist')(process.argv.slice(2));
 var serverOptions = {};
 serverOptions["MinKNOWRunDirectory"] = "";
 serverOptions["MARTiSampleDirectory"] = [];
-serverOptions["TaxonomyDirectory"] = "";
+serverOptions["TaxonomyDir"] = "";
 serverOptions["MaxSimultaneousAnalyses"] = 10;
 serverOptions["Port"] = "";
 serverOptions["https"] = "false";
@@ -39,6 +39,8 @@ try {
   const martiEngineOptions = fsExtra.readFileSync(engineOptionsPath, 'UTF-8');
   const lines = martiEngineOptions.split(/\r?\n/);
   var newProcess = false;
+  var newBlastProcess = false;
+  var newCentrifugeProcess = false;
   var processFound = false;
   var currentProcess = {text:""};
   lines.forEach((line) => {
@@ -46,6 +48,14 @@ try {
         if (newProcess == true) {
           if (line == "") {
             newProcess = false;
+
+            if (newBlastProcess) {
+              currentProcess.type = "Blast";
+            } else if (newCentrifugeProcess) {
+              currentProcess.type = "Centrifuge";
+            }
+            newBlastProcess = false;
+            newCentrifugeProcess = false;
             engineOptionsObject.processes.push(currentProcess);
             currentProcess = {text:""};
           } else {
@@ -63,6 +73,11 @@ try {
         } else if (line.search("BlastProcess") != -1) {
           newProcess = true;
           processFound = true;
+          newBlastProcess = true;
+        } else if (line.search("CentrifugeProcess") != -1) {
+          newProcess = true;
+          processFound = true;
+          newCentrifugeProcess = true;
         } else {
           const fields = line.split(":");
           if(fields[0] == "MARTiSampleDirectory") {
@@ -86,7 +101,7 @@ try {
   });
   if( serverOptions["MinKNOWRunDirectory"] == "" ||
       serverOptions["MARTiSampleDirectory"].length < 1 ||
-      serverOptions["TaxonomyDirectory"] == "") {
+      serverOptions["TaxonomyDir"] == "") {
     console.log("Warning: Could not find all fields in " + serverOptionsPath + ".");
     console.log("Please check this file and restart to start new analyses.");
   }
@@ -140,7 +155,7 @@ if (serverOptions["https"].toLowerCase() === 'true') {
 
 const restrictedMode = argv.r || false;
 
-const martiGuiVersion = "0.19.4";
+const martiGuiVersion = "0.19.7";
 
 if (argv.v || argv.version) {
   console.log(martiGuiVersion);
@@ -208,7 +223,7 @@ function makeConfigFileString(form_object) {
   configFileString += "LocalSchedulerMaxJobs:" + form_object["maxJobs"] + "\n";
   configFileString += "InactivityTimeout:" + form_object["inactivityTimeout"] + "\n";
   configFileString += "StopProcessingAfter:" + form_object["stopProcessingAfter"] + "\n";
-  configFileString += "TaxonomyDir:" + serverOptions["TaxonomyDirectory"] + "\n";
+  configFileString += "TaxonomyDir:" + serverOptions["TaxonomyDir"] + "\n";
   configFileString += "LCAMaxHits:" + form_object["maxHits"] + "\n";
   configFileString += "LCAScorePercent:" + form_object["scorePercent"] + "\n";
   configFileString += "LCAMinIdentity:" + form_object["minimumIdentity"] + "\n";
@@ -287,6 +302,12 @@ if (!data.sample.hasOwnProperty("runId")) {
   }
   if(sampleNamesDict[runId]){
     updateMetaDataSampleNames(runId);
+  }
+
+  if (sampleMetadataDict[runId]) {
+    if (sampleMetadataDict[runId][sampleId]){
+      sampleMetaDict[runId][sampleId]["sample"]["metadatafile"] = sampleMetadataDict[runId][sampleId];
+    }
   }
 
   io.sockets.emit('meta-update-available', {
@@ -395,6 +416,39 @@ observer.on('meta-file-removed', meta => {
 
 
 });
+
+
+
+observer.on('metadata-file-added', data => {
+  metadataFileUpdate(data);
+});
+
+function metadataFileUpdate(meta) {
+
+var data = meta.content;
+var sampleId = meta.id;
+var runId = meta.runId;
+
+  if (sampleMetadataDict[runId]) {
+    sampleMetadataDict[runId][sampleId] = data;
+  } else {
+    sampleMetadataDict[runId] = {};
+    sampleMetadataDict[runId][sampleId] = data;
+  }
+
+  if (sampleMetaDict[runId]) {
+    if (sampleMetaDict[runId][sampleId]){
+
+      sampleMetaDict[runId][sampleId]["sample"]["metadatafile"] = data;
+
+      io.sockets.emit('meta-update-available', {
+        runId: runId,
+        sampleId: sampleId
+      });
+    }
+  }
+
+}
 
 observer.on('tree-file-added', tree => {
 
@@ -563,6 +617,7 @@ if(serverOptions["MARTiSampleDirectory"].length > 0){
 
 
 var sampleMetaDict = {};
+var sampleMetadataDict = {};
 var sampleNamesDict = {};
 var sampleTreeDict = {};
 var sampleAccumulationDict = {};
@@ -844,6 +899,7 @@ io.on('connect', function(socket){
     io.to(id).emit('dashboard-meta-response', sampleMetaDict[selectedDashboardSampleRunId][selectedDashboardSampleName]);
     console.log(`[${new Date().toLocaleString()}][${id}] Dashboard meta data sent`);
     });
+
 
 socket.on('compare-tree-request', request => {
   var id = request.clientId;

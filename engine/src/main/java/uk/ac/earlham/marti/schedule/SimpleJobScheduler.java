@@ -20,9 +20,10 @@ import uk.ac.earlham.marti.core.MARTiLog;
 public class SimpleJobScheduler implements JobScheduler {
     private static final int MAX_QUICK_JOB_ID = 100000;
     private ConcurrentHashMap<Integer, SimpleJobSchedulerJob> allJobs = new ConcurrentHashMap<Integer, SimpleJobSchedulerJob>();
+    private ConcurrentHashMap<Integer, SimpleJobSchedulerJob> failedJobs = new ConcurrentHashMap<Integer, SimpleJobSchedulerJob>();
     private LinkedList<SimpleJobSchedulerJob> pendingJobs = new LinkedList<SimpleJobSchedulerJob>();
     private LinkedList<SimpleJobSchedulerJob> runningJobs = new LinkedList<SimpleJobSchedulerJob>();
-    private LinkedList<SimpleJobSchedulerJob> failedJobs = new LinkedList<SimpleJobSchedulerJob>();
+    //private LinkedList<SimpleJobSchedulerJob> failedJobs = new LinkedList<SimpleJobSchedulerJob>();
     //private LinkedList<SimpleJobSchedulerJob> finishedJobs = new LinkedList<SimpleJobSchedulerJob>();
     private MARTiLog schedulerLog = new MARTiLog();
     private MARTiEngineOptions options;
@@ -74,8 +75,8 @@ public class SimpleJobScheduler implements JobScheduler {
     public void setMaxJobs(int m) {
         maxJobs = m;
     }
-    
-    public synchronized int submitJob(String[] commands, String logFilename, boolean submitJob) {
+        
+    public synchronized int submitJob(String identifier, String[] commands, String logFilename, boolean submitJob) {
         if (MARTiEngineOptions.DEBUG_DONT_SUBMIT_JOB) {
             commands = new String[]{"echo","Hello"};
         }
@@ -85,20 +86,20 @@ public class SimpleJobScheduler implements JobScheduler {
             dontRunIt = true;
         }
                 
-        SimpleJobSchedulerJob j = new SimpleJobSchedulerJob(jobId, commands, logFilename, dontRunIt);
+        SimpleJobSchedulerJob j = new SimpleJobSchedulerJob(options, identifier, jobId, commands, logFilename, dontRunIt);
         pendingJobs.add(j);
         allJobs.put(jobId, j);
         schedulerLog.println("Submitted job\t"+jobId+"\t"+j.getCommand());
         return jobId++;
     }
 
-    public synchronized int submitJob(String[] commands, String logFilename, String errorFilename, boolean submitJob) {
+    public synchronized int submitJob(String identifier, String[] commands, String logFilename, String errorFilename, boolean submitJob) {
         boolean dontRunIt = false;
         if ((dontRunCommand == true) || (submitJob == false)) {
             dontRunIt = true;
         }
         
-        SimpleJobSchedulerJob j = new SimpleJobSchedulerJob(jobId, commands, logFilename, errorFilename, dontRunIt);
+        SimpleJobSchedulerJob j = new SimpleJobSchedulerJob(options, identifier, jobId, commands, logFilename, errorFilename, dontRunIt);
         pendingJobs.add(j);
         schedulerLog.println("Submitted job\t"+jobId+"\t"+j.getCommand());
         return jobId++;
@@ -195,6 +196,14 @@ public class SimpleJobScheduler implements JobScheduler {
             return false;
         }
     }
+
+    public synchronized boolean checkJobFailed(int i) {
+        boolean failed = false;
+        if (failedJobs.containsKey(i)) {
+            failed = true;
+        }
+        return failed;
+    }
     
     public synchronized int getExitValue(int i) {
         if (i < MAX_QUICK_JOB_ID) {
@@ -218,6 +227,15 @@ public class SimpleJobScheduler implements JobScheduler {
 
     public synchronized void markJobAsFailed(int i) {
         SimpleJobSchedulerJob ssj = allJobs.get(i);
-        failedJobs.add(ssj);
+        failedJobs.put(i, ssj);
+    }
+
+    public synchronized void resubmitJobIfPossible(int i) {
+        // Resubmission not possible with local job scheduler.
+        // Probably pointless, unlike with SLURM where it may make a differencece.
+    }
+
+    public MARTiLog getSchedulerLog() {
+        return schedulerLog;
     }
 }

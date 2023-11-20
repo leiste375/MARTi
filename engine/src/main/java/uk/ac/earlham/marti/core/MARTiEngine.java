@@ -17,13 +17,14 @@ import uk.ac.earlham.marti.schedule.*;
  * @author Richard M. Leggett
  */
 public class MARTiEngine {
-    public final static String VERSION_STRING = "v0.9.15f";
+    public final static String VERSION_STRING = "v0.9.15i";
     public final static long SERIAL_VERSION = 3L;
     public final static boolean SHOW_NOTES = false;
         
     private static void process(MARTiEngineOptions options) throws InterruptedException {
         ReadProcessor rp = new ReadProcessor(options, options.getProgressReport());
         options.makeDirectories();
+        options.writeMetadataJSONs();
         rp.process();
     }    
     
@@ -105,7 +106,7 @@ public class MARTiEngine {
             SlurmScheduler ss = new SlurmScheduler(options);
             System.out.println("Test mode");
             String commands[] = {"sleep", "10"};
-            int jobid = ss.submitJob(commands, "testlog.txt", true);
+            int jobid = ss.submitJob("test", commands, "testlog.txt", true);
             //ssj.run();
             while(true) {
                 ss.manageQueue();

@@ -4,9 +4,16 @@
  */
 package uk.ac.earlham.marti.core;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.math.BigDecimal;
@@ -14,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -23,6 +31,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
 import javax.json.*;
 import javax.json.stream.JsonGenerator;
 import uk.ac.earlham.marti.blast.BlastProcess;
@@ -42,11 +53,13 @@ public class SampleMetaData {
     private int readsClassified = 0;
     private int readsWithPoorAlignments = 0;
     private int readsAnalysed = 0;
+    private long bpAnalysed = 0;
     private long totalInputBp = 0;
     private long totalClassifiedBp = 0;
     private int countByQuality[] = new int[51];
     private double totalQuality = 0;
     private Hashtable<String,Integer> chunkCounts = new Hashtable<String,Integer>();
+    private Hashtable<String,Long> chunkYields = new Hashtable<String,Long>();
     private long startTime = System.nanoTime();
     private int lastChunkAnalysedTime = 0;
     private ArrayList<Integer> chunkAnalysedTimings = new ArrayList<Integer>();
@@ -61,7 +74,6 @@ public class SampleMetaData {
         }
         
         LocalDateTime date = LocalDateTime.now();
-        sequencingTimeString = date.truncatedTo(ChronoUnit.SECONDS).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).toString();
         analysingTimeString = date.truncatedTo(ChronoUnit.SECONDS).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).toString();
     }
     
@@ -95,7 +107,7 @@ public class SampleMetaData {
         }
     }  
     
-    public synchronized void registerFilteredFastaChunk(String fastaFilename, int count) {
+    public synchronized void registerFilteredFastaChunk(String fastaFilename, int count, long yield) {
         options.getLog().println("Registering filtered chunk "+fastaFilename + " with "+count+" reads");
         readsPassedFilterByChunk += count;
         if (chunkCounts.containsKey(fastaFilename)) {
@@ -103,13 +115,21 @@ public class SampleMetaData {
         } else {
             chunkCounts.put(fastaFilename, count);
         }
+        if(chunkYields.contains(fastaFilename)) {
+            options.getLog().printlnLogAndScreen("Error: filename "+fastaFilename+" already seen.");
+        } else {
+            chunkYields.put(fastaFilename, yield);
+        }
+        
     }
     
     public synchronized void registerChunkAnalysed(String fastaFilename) {
-        if (chunkCounts.containsKey(fastaFilename)) {
+        if (chunkCounts.containsKey(fastaFilename) && chunkYields.containsKey(fastaFilename)) {
             int count = chunkCounts.get(fastaFilename);
+            long yield = chunkYields.get(fastaFilename);
             options.getLog().println("Chunk analysed "+fastaFilename+" with "+count+" reads");
             readsAnalysed += count;
+            bpAnalysed += yield;
             lastChunkAnalysedTime = this.getMinutesSinceStart();
             chunkAnalysedTimings.add(lastChunkAnalysedTime);
         } else {
@@ -122,8 +142,9 @@ public class SampleMetaData {
         totalClassifiedBp += bp;
     }
     
-    public synchronized void markPoorAlignments(int n) {
+    public synchronized void markPoorAlignments(int n, long bp) {
         readsClassified-=n;
+        totalClassifiedBp -= bp;
         readsWithPoorAlignments+=n;
     }
     
@@ -138,7 +159,7 @@ public class SampleMetaData {
     }
     
     public long getYieldUnclassified() {
-        return totalInputBp - totalClassifiedBp;
+        return bpAnalysed - totalClassifiedBp;
     }
     
     public synchronized void writeSampleJSON(boolean martiComplete) {
@@ -217,8 +238,10 @@ public class SampleMetaData {
         sampleObjectBuilder.add("readsPassedFilter", readsPassedFilter);
         sampleObjectBuilder.add("readsWithClassification", readsClassified);
         sampleObjectBuilder.add("readsUnclassified", getReadsUnclassified());
+        sampleObjectBuilder.add("classifiedYield", totalClassifiedBp);
+        sampleObjectBuilder.add("unclassifiedYield", getYieldUnclassified());
         sampleObjectBuilder.add("readsWithPoorAlignments", readsWithPoorAlignments);
-        sampleObjectBuilder.add("readsAnalysed", readsAnalysed);       
+        sampleObjectBuilder.add("readsAnalysed", readsAnalysed);    
         sampleObjectBuilder.add("sequencingStatus", "Complete");
         sampleObjectBuilder.add("martiStatus", martiComplete ? "Complete":"Processing");
         sampleObjectBuilder.add("analysis", analysisObjectBuilder);
@@ -255,4 +278,81 @@ public class SampleMetaData {
         
         options.copyFile(filename, filenameFinal);
     }
+    
+    public void setDateFromSequenceFile(String fastqPathname) {    
+        // look for date in fastq header line
+        try {
+            String header;
+            BufferedReader br = null;
+            InputStream fileStream = null;
+            InputStream gzipStream = null;
+            Reader decoder = null;
+
+            if (fastqPathname.toLowerCase().endsWith(".fastq") ||
+                fastqPathname.toLowerCase().endsWith(".fq")) {                
+                br = new BufferedReader(new FileReader(fastqPathname));
+                if (br == null) {
+                    options.getLog().printlnLogAndScreen("Couldn't open file "+fastqPathname);
+                    System.exit(1);
+                }
+            } else if ( fastqPathname.toLowerCase().endsWith(".fastq.gz") ||
+                        fastqPathname.toLowerCase().endsWith(".fq.gz")) {
+                fileStream = new FileInputStream(fastqPathname);
+                if (fileStream != null) {
+                    gzipStream = new GZIPInputStream(fileStream);
+                    if (gzipStream != null) {
+                        decoder = new InputStreamReader(gzipStream, "US-ASCII");
+                        if (decoder != null) {
+                            br = new BufferedReader(decoder);                      
+
+                            if (br == null) {
+                                options.getLog().printlnLogAndScreen("Couldn't open file "+fastqPathname);
+                                System.exit(1);
+                            }
+                        } else {
+                            options.getLog().printlnLogAndScreen("Couldn't open decoder for "+fastqPathname);
+                            System.exit(1);
+                        }
+                    } else {
+                        options.getLog().printlnLogAndScreen("Couldn't open GZIP stream for "+fastqPathname);
+                        System.exit(1);
+                    }
+                } else {
+                    options.getLog().printlnLogAndScreen("Couldn't open filestream for "+fastqPathname);
+                    System.exit(1);
+                }
+            } else {
+                options.getLog().printlnLogAndScreen("Unknown suffix for "+fastqPathname);
+                System.exit(1);
+            }
+
+            if (br == null) {
+                options.getLog().printlnLogAndScreen("Ooops shouldn't have got to here without a .fastq or a .fq or a .fastq.gz or a .fq.gz");
+                System.exit(1);
+            }
+            
+            String firstLine = br.readLine();
+            Pattern pattern = Pattern.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z");
+            Matcher matcher = pattern.matcher(firstLine);
+            if(matcher.find()) {
+                sequencingTimeString = matcher.group();
+                return;
+            }
+            
+            // otherwise use file metadata.
+            FileTime creationTime = (FileTime) Files.getAttribute(Paths.get(fastqPathname), "creationTime");
+            if(creationTime != null) {
+                 sequencingTimeString = creationTime.toString();
+            }
+   
+        } catch (IOException e) {
+            System.out.println("setDateFromSequencingFile exception:");
+            e.printStackTrace();
+        }     
+    }
+    
+    public String getSequencingTimeString() {
+        return sequencingTimeString;
+    }
+    
 }

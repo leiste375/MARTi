@@ -30,6 +30,7 @@ public class ReadFilterSample {
     PrintWriter pwFasta = null;
     private int chunkNumber = -1;
     private int readCountInChunk = 0;
+    private long bpInChunk = 0;
     private String currentFastqChunkFilename = null;
     private String currentFastaChunkFilename = null;
     private ArrayList<Integer> allReadLengths = new ArrayList<Integer>();
@@ -171,6 +172,7 @@ public class ReadFilterSample {
                 Path dest = Paths.get(currentFastqChunkFilename);
                 try {
                     Files.move(source, dest, StandardCopyOption.REPLACE_EXISTING);
+                    options.getProgressReport().recordCompleted("chunk_"+currentFastqChunkFilename);
                 } catch (Exception e) {
                     options.getLog().println("Move failed");
                     options.getLog().println("Source was "+source);
@@ -187,6 +189,7 @@ public class ReadFilterSample {
                 Path dest = Paths.get(currentFastaChunkFilename);
                 try {
                     Files.move(source, dest, StandardCopyOption.REPLACE_EXISTING);
+                    options.getProgressReport().recordCompleted("chunk_"+currentFastaChunkFilename);
                 } catch (Exception e) {
                     options.getLog().println("Move failed");
                     options.getLog().println("Source was "+source);
@@ -198,7 +201,7 @@ public class ReadFilterSample {
             
             options.getLog().println("Moves complete.");
 
-            metaData.registerFilteredFastaChunk(currentFastaChunkFilename, readCountInChunk);  
+            metaData.registerFilteredFastaChunk(currentFastaChunkFilename, readCountInChunk, bpInChunk);
             metaData.writeSampleJSON(false);
 
             options.getLog().println("Now to add to pending pair list");
@@ -209,6 +212,7 @@ public class ReadFilterSample {
             options.getLog().println("Reads filtered from chunk = "+readsFilteredFromChunk);
 
             readCountInChunk = 0;
+            bpInChunk = 0l;
             
             if (options.getStopProcessingAfter() > 0) {
                 if (writtenReadLengths.size() >= options.getStopProcessingAfter()) {
@@ -261,14 +265,17 @@ public class ReadFilterSample {
         //    processThis = false;
         //}        
         
+        if(metaData.getSequencingTimeString() == "") {
+            metaData.setDateFromSequenceFile(fastqPathname);
+        }
+        
         if (stopProcessingChunks) {
             options.getLog().println("Got enough reads, so ignoring file "+fastqPathname);
             options.getLog().println("PendingPairList: processed=" + pendingPairList.getFilesProcessed() + " pending=" + pendingPairList.getPendingFileCount());
         }
 
         if (!stopProcessingChunks) {
-            options.getLog().println("Processing file "+fastqPathname);
-            System.out.println("Processing file "+fastqPathname);
+            options.getLog().printlnLogAndScreen("Processing file (RFS) "+fastqPathname);
 
             try {
                 String header;
@@ -346,6 +353,7 @@ public class ReadFilterSample {
                                 }
 
                                 readCountInChunk++;
+                                bpInChunk += seq.length();
                                 writtenReadLengths.add(seq.length());
                                 chunkReadLengths.add(seq.length());
                                 readStatistics.addReadLength(barcode, readID,seq.length(), true);
@@ -389,6 +397,8 @@ public class ReadFilterSample {
                 System.out.println("runConvertFastQ exception");
                 e.printStackTrace();
             }
+                        
+            options.getProgressReport().recordCompleted("filter_"+fastqPathname);
         }
     }                
       
